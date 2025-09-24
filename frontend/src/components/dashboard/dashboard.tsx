@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Search, Train, MapPin, Clock, X, Info } from 'lucide-react'
 import { apiService } from '@/services/api'
 import { islVideoGenerationService } from '@/services/isl-video-generation-service'
 import { TrainRoute } from '@/types/train-route'
 import { TrainAnnouncementRequest, TrainAnnouncementResponse } from '@/types/train-announcement'
+import toast from 'react-hot-toast'
 
 interface TrainInfo extends TrainRoute {
     platform?: number
@@ -21,12 +22,16 @@ export const Dashboard: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('')
     const [searchResults, setSearchResults] = useState<TrainInfo[]>([])
     const [isSearching, setIsSearching] = useState(false)
+    const [showSearchResults, setShowSearchResults] = useState(false)
+    const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null)
+    const searchContainerRef = useRef<HTMLDivElement>(null)
     const [announcementCategories, setAnnouncementCategories] = useState<string[]>([])
     const [isLoadingCategories, setIsLoadingCategories] = useState(true)
     const [supportedModels, setSupportedModels] = useState<string[]>([])
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [selectedTrainForGeneration, setSelectedTrainForGeneration] = useState<TrainInfo | null>(null)
     const [selectedModel, setSelectedModel] = useState<string>('male')
+    const [isGeneratingInModal, setIsGeneratingInModal] = useState(false)
     const [isSignsInfoModalOpen, setIsSignsInfoModalOpen] = useState(false)
     const [selectedTrainForSignsInfo, setSelectedTrainForSignsInfo] = useState<TrainInfo | null>(null)
     const [playbackSpeeds, setPlaybackSpeeds] = useState<Record<number, number>>({})
@@ -75,16 +80,40 @@ export const Dashboard: React.FC = () => {
         fetchData()
     }, [])
 
-    const handleSearch = async () => {
-        if (!searchQuery.trim()) {
+    // Cleanup timeout on unmount
+    useEffect(() => {
+        return () => {
+            if (searchTimeout) {
+                clearTimeout(searchTimeout)
+            }
+        }
+    }, [searchTimeout])
+
+    // Handle click outside to hide search results
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+                setShowSearchResults(false)
+            }
+        }
+
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside)
+        }
+    }, [])
+
+    const performSearch = async (query: string) => {
+        if (!query.trim()) {
             setSearchResults([])
+            setShowSearchResults(false)
             return
         }
 
         setIsSearching(true)
         
         try {
-            const results = await apiService.searchTrainRoutes(searchQuery, 10)
+            const results = await apiService.searchTrainRoutes(query, 10)
             // Set default values for each train result
             const resultsWithDefaults = results.map(train => ({
                 ...train,
@@ -93,19 +122,35 @@ export const Dashboard: React.FC = () => {
                 model: 'male' // Default model
             }))
             setSearchResults(resultsWithDefaults)
+            setShowSearchResults(true)
         } catch (error) {
             console.error('Error searching trains:', error)
             setSearchResults([])
+            setShowSearchResults(false)
         } finally {
             setIsSearching(false)
         }
     }
 
+    const handleSearch = async () => {
+        // Clear any existing timeout
+        if (searchTimeout) {
+            clearTimeout(searchTimeout)
+        }
+        await performSearch(searchQuery)
+    }
+
     const handleClear = async () => {
         try {
+            // Clear any existing timeout
+            if (searchTimeout) {
+                clearTimeout(searchTimeout)
+            }
+            
             // Clear the search state
             setSearchQuery('')
             setSearchResults([])
+            setShowSearchResults(false)
             
             // Delete all ISL videos from temp directory
             await apiService.deleteAllTempVideos()
@@ -146,6 +191,7 @@ export const Dashboard: React.FC = () => {
         setIsModalOpen(false)
         setSelectedTrainForGeneration(null)
         setSelectedModel('male')
+        setIsGeneratingInModal(false)
     }
 
     const handleOpenSignsInfoModal = (train: TrainInfo) => {
@@ -219,10 +265,10 @@ export const Dashboard: React.FC = () => {
             return
         }
 
-        // Close modal first
-        handleCloseModal()
+        // Set generating state in modal
+        setIsGeneratingInModal(true)
 
-        // Set generating state
+        // Set generating state in search results
         setSearchResults(prevResults => 
             prevResults.map(t => 
                 t.train_number === selectedTrainForGeneration.train_number 
@@ -255,6 +301,9 @@ export const Dashboard: React.FC = () => {
                         isGenerating: false 
                     }))
             )
+            
+            // Ensure search results remain visible
+            setShowSearchResults(true)
 
             // Initialize playback speed for this train
             setPlaybackSpeeds(prev => ({
@@ -262,8 +311,17 @@ export const Dashboard: React.FC = () => {
                 [selectedTrainForGeneration.id]: 1
             }))
 
+            // Show success message
+            toast.success('Announcement generated successfully!')
+            
+            // Close modal after successful generation
+            handleCloseModal()
+
         } catch (error) {
             console.error('Error generating announcement:', error)
+            
+            // Show error message
+            toast.error('Failed to generate announcement. Please try again.')
             
             // Set error state and remove other results
             setSearchResults(prevResults => 
@@ -278,6 +336,14 @@ export const Dashboard: React.FC = () => {
                         isGenerating: false 
                     }))
             )
+            
+            // Ensure search results remain visible even on error
+            setShowSearchResults(true)
+
+            // Close modal even on error
+            handleCloseModal()
+        } finally {
+            setIsGeneratingInModal(false)
         }
     }
 
@@ -397,6 +463,25 @@ export const Dashboard: React.FC = () => {
         const value = e.target.value
         const validatedValue = validateTrainNumber(value)
         setSearchQuery(validatedValue)
+        
+        // Clear existing timeout
+        if (searchTimeout) {
+            clearTimeout(searchTimeout)
+        }
+        
+        // If input is empty, clear results immediately
+        if (!validatedValue.trim()) {
+            setSearchResults([])
+            setShowSearchResults(false)
+            return
+        }
+        
+        // Set new timeout for debounced search
+        const newTimeout = setTimeout(() => {
+            performSearch(validatedValue)
+        }, 300) // 300ms delay
+        
+        setSearchTimeout(newTimeout)
     }
 
     const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -415,7 +500,7 @@ export const Dashboard: React.FC = () => {
                     </div>
 
                     {/* Train Search Section */}
-                    <div className="bg-white p-6 border border-gray-200">
+                    <div ref={searchContainerRef} className="bg-white p-6 border border-gray-200">
                         <h2 className="text-xl font-semibold text-gray-900 mb-4">Search Train</h2>
                         
                         <div className="flex gap-4 mb-4">
@@ -427,6 +512,11 @@ export const Dashboard: React.FC = () => {
                                         value={searchQuery}
                                         onChange={handleInputChange}
                                         onKeyPress={handleKeyPress}
+                                        onFocus={() => {
+                                            if (searchResults.length > 0) {
+                                                setShowSearchResults(true)
+                                            }
+                                        }}
                                         placeholder="Enter train number or train name"
                                         className="w-full pl-10 pr-4 py-3 border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                     />
@@ -435,7 +525,7 @@ export const Dashboard: React.FC = () => {
                             <button
                                 onClick={handleSearch}
                                 disabled={isSearching}
-                                className="px-6 py-3 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                className="hidden px-6 py-3 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
                                 {isSearching ? (
                                     <>
@@ -459,8 +549,33 @@ export const Dashboard: React.FC = () => {
                             </button>
                         </div>
 
+                        {/* Loading Indicator */}
+                        {isSearching && searchQuery.trim() && (
+                            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                                <div className="flex items-center gap-3">
+                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                                    <span className="text-blue-700">Searching for trains...</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* No Results Message */}
+                        {showSearchResults && searchResults.length === 0 && !isSearching && searchQuery.trim() && (
+                            <div className="mb-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                                <div className="text-center">
+                                    <div className="text-gray-500 mb-2">
+                                        <Train className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+                                        <p className="text-gray-600">No trains found matching your search</p>
+                                        <p className="text-sm text-gray-500 mt-1">
+                                            Try searching with a different train number or name
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Search Results */}
-                        {searchResults.length > 0 && (
+                        {showSearchResults && searchResults.length > 0 && (
                             <div className="mb-6">
                                 <h3 className="text-lg font-medium text-gray-900 mb-3">Search Results</h3>
                                 <div className="space-y-6">
@@ -779,16 +894,27 @@ export const Dashboard: React.FC = () => {
                         <div className="flex gap-3 justify-end">
                             <button
                                 onClick={handleCloseModal}
-                                className="px-4 py-2 border border-gray-300 text-gray-700 hover:bg-gray-50"
+                                disabled={isGeneratingInModal}
+                                className="px-4 py-2 border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleGenerateAnnouncement}
-                                className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2"
+                                disabled={isGeneratingInModal}
+                                className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
-                                <Clock className="w-4 h-4" />
-                                Generate
+                                {isGeneratingInModal ? (
+                                    <>
+                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                                        Generating...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Clock className="w-4 h-4" />
+                                        Generate
+                                    </>
+                                )}
                             </button>
                         </div>
                     </div>
