@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="40" viewBox="0 0 120 40" fill="none">
+  <!-- SignVerse Logo -->
+  <defs>
+    <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1D4ED8;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Hand gesture icon -->
+  <path d="M8 12C8 8.68629 10.6863 6 14 6C17.3137 6 20 8.68629 20 12V16C20 19.3137 17.3137 22 14 22C10.6863 22 8 19.3137 8 16V12Z" fill="url(#logoGradient)"/>
+  <path d="M6 18C6 15.7909 7.79086 14 10 14C12.2091 14 14 15.7909 14 18V20C14 22.2091 12.2091 24 10 24C7.79086 24 6 22.2091 6 20V18Z" fill="url(#logoGradient)"/>
+  
+  <!-- Text -->
+  <text x="32" y="16" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#1D4ED8">Sign</text>
+  <text x="32" y="28" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#3B82F6">Verse</text>
+</svg>
