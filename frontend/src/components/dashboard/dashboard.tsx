@@ -23,7 +23,6 @@ export const Dashboard: React.FC = () => {
     const [searchResults, setSearchResults] = useState<TrainInfo[]>([])
     const [isSearching, setIsSearching] = useState(false)
     const [showSearchResults, setShowSearchResults] = useState(false)
-    const [searchTimeout, setSearchTimeout] = useState<NodeJS.Timeout | null>(null)
     const searchContainerRef = useRef<HTMLDivElement>(null)
     const [announcementCategories, setAnnouncementCategories] = useState<string[]>([])
     const [isLoadingCategories, setIsLoadingCategories] = useState(true)
@@ -35,6 +34,7 @@ export const Dashboard: React.FC = () => {
     const [isSignsInfoModalOpen, setIsSignsInfoModalOpen] = useState(false)
     const [selectedTrainForSignsInfo, setSelectedTrainForSignsInfo] = useState<TrainInfo | null>(null)
     const [playbackSpeeds, setPlaybackSpeeds] = useState<Record<number, number>>({})
+    const [showTextInHTML, setShowTextInHTML] = useState<Record<number, boolean>>({})
     
     // Publish announcement modal state
     const [showPublishModal, setShowPublishModal] = useState(false)
@@ -80,14 +80,6 @@ export const Dashboard: React.FC = () => {
         fetchData()
     }, [])
 
-    // Cleanup timeout on unmount
-    useEffect(() => {
-        return () => {
-            if (searchTimeout) {
-                clearTimeout(searchTimeout)
-            }
-        }
-    }, [searchTimeout])
 
     // Handle click outside to hide search results
     useEffect(() => {
@@ -133,20 +125,11 @@ export const Dashboard: React.FC = () => {
     }
 
     const handleSearch = async () => {
-        // Clear any existing timeout
-        if (searchTimeout) {
-            clearTimeout(searchTimeout)
-        }
         await performSearch(searchQuery)
     }
 
     const handleClear = async () => {
         try {
-            // Clear any existing timeout
-            if (searchTimeout) {
-                clearTimeout(searchTimeout)
-            }
-            
             // Clear the search state
             setSearchQuery('')
             setSearchResults([])
@@ -257,6 +240,16 @@ export const Dashboard: React.FC = () => {
                 }
             }
         }
+    }
+
+    const handleTextDisplayToggle = (checked: boolean, trainId: number) => {
+        console.log(`Setting text display to ${checked} for train ID: ${trainId}`)
+        
+        // Update state
+        setShowTextInHTML(prev => ({
+            ...prev,
+            [trainId]: checked
+        }))
     }
 
     const handleGenerateAnnouncement = async () => {
@@ -408,6 +401,30 @@ export const Dashboard: React.FC = () => {
             console.log('Publishing announcement for train:', train.train_number)
             console.log('Video path:', absoluteVideoPath)
 
+            // Get the playback speed for this train (default to 1.0 if not set)
+            const playbackSpeed = playbackSpeeds[train.id] || 1.0
+            console.log('Using playback speed:', playbackSpeed, 'for train:', train.train_number)
+
+            // Get the text display setting for this train (default to true if not set)
+            const showText = showTextInHTML[train.id] !== false
+            console.log('Show text in HTML:', showText, 'for train:', train.train_number)
+            console.log('Checkbox state for train', train.id, ':', showTextInHTML[train.id])
+
+            // Prepare text messages if showText is enabled
+            let textMessages = null
+            if (showText && train.generatedAnnouncement) {
+                textMessages = [{
+                    english: train.generatedAnnouncement.generated_text || '',
+                    hindi: train.generatedAnnouncement.generated_text_hindi || '',
+                    marathi: train.generatedAnnouncement.generated_text_marathi || '',
+                    gujarati: train.generatedAnnouncement.generated_text_gujarati || ''
+                }]
+                console.log('Text messages prepared:', textMessages)
+                console.log('Generated announcement data:', train.generatedAnnouncement)
+            } else {
+                console.log('Text messages not prepared - showText:', showText, 'hasAnnouncement:', !!train.generatedAnnouncement)
+            }
+
             // Call the HTML generation endpoint
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/html-generation/generate-simple-html`, {
                 method: 'POST',
@@ -415,7 +432,10 @@ export const Dashboard: React.FC = () => {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    video_path: absoluteVideoPath
+                    video_path: absoluteVideoPath,
+                    playback_speed: playbackSpeed,
+                    show_text: showText,
+                    text_messages: textMessages
                 })
             })
 
@@ -464,11 +484,6 @@ export const Dashboard: React.FC = () => {
         const validatedValue = validateTrainNumber(value)
         setSearchQuery(validatedValue)
         
-        // Clear existing timeout
-        if (searchTimeout) {
-            clearTimeout(searchTimeout)
-        }
-        
         // If input is empty, clear results immediately
         if (!validatedValue.trim()) {
             setSearchResults([])
@@ -476,12 +491,7 @@ export const Dashboard: React.FC = () => {
             return
         }
         
-        // Set new timeout for debounced search
-        const newTimeout = setTimeout(() => {
-            performSearch(validatedValue)
-        }, 300) // 300ms delay
-        
-        setSearchTimeout(newTimeout)
+        // No auto-search - user must click search button or press Enter
     }
 
     const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -525,7 +535,7 @@ export const Dashboard: React.FC = () => {
                             <button
                                 onClick={handleSearch}
                                 disabled={isSearching}
-                                className="hidden px-6 py-3 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                className="px-6 py-3 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                             >
                                 {isSearching ? (
                                     <>
@@ -789,6 +799,24 @@ export const Dashboard: React.FC = () => {
                                                                                         )
                                                                                     })}
                                                                                 </div>
+                                                                            </div>
+                                                                            
+                                                                            {/* Text Display Option */}
+                                                                            <div className="mt-4 p-3 bg-gray-100 rounded-lg">
+                                                                                <label className="flex items-center space-x-3 cursor-pointer">
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        checked={showTextInHTML[train.id] !== false}
+                                                                                        onChange={(e) => handleTextDisplayToggle(e.target.checked, train.id)}
+                                                                                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                                                                    />
+                                                                                    <span className="text-sm font-medium text-gray-700">
+                                                                                        Show announcement text in HTML page
+                                                                                    </span>
+                                                                                </label>
+                                                                                <p className="text-xs text-gray-500 mt-1 ml-7">
+                                                                                    When enabled, the generated HTML will display the announcement text in multiple languages below the video
+                                                                                </p>
                                                                             </div>
                                                                             
                                                                             {/* Publish Announcement Button */}
